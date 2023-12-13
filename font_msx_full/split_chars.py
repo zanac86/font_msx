@@ -1,5 +1,6 @@
 import os
 import sys
+import struct
 from PIL import Image
 
 
@@ -50,14 +51,34 @@ class FONTBITMAP():
         ss.append("*/")
         return b, "\n".join(ss)
 
+    # биты в байте - горизонтальная строка
+    # 6 старших бит, 2 младших = 0
+    # всего 8 строк - 8 байт
+    def get_bytes_for_symbol_transp(self, N):
+        ss = ["/*"]
+        sb = ["" for i in range(self.char_h)]
+        x0, y0 = self.get_bitmap_start_pos(N)
+        b = []
+        for yy in range(self.char_h):
+            b1 = 0
+            for xx in range(self.char_w):
+                x = x0 + xx
+                y = y0 + yy
+                if self.pix[x, y] == 255:
+                    b1 = b1 | (1 << (7-xx))
+                    sb[yy] = sb[yy] + '#'
+                else:
+                    sb[yy] = sb[yy] + ' '
+            b.append(b1)
+        ss = ss + sb
+        ss.append("*/")
+        return b, "\n".join(ss)
+
 
 def bytes_to_code(b):
     s = ["0x%02x" % i for i in b]
     return ", ".join(s)
 
-
-f = FONTBITMAP("sys2_0002.png")
-fo = open("chars.c", "wt")
 
 # ключ - код в 1251, значение - код в кои8, его ищем в картинке
 
@@ -128,6 +149,10 @@ win2koi = {
     218: 255
 }
 
+f = FONTBITMAP("sys2_0002.png")
+
+fo = open("chars.c", "wt")
+
 for i in range(256):
     ii = win2koi[i] if i in win2koi else i
 
@@ -135,9 +160,42 @@ for i in range(256):
     str_bytes = bytes_to_code(bb)
     # s = "0x06, " + s + ", // %3d  %02x\n" % (i, i)
     s=f"0x06, {str_bytes}, // {i:3d} {i:02x}\n"
-    # fo.write("\n")
-    # fo.write(ss)
-    # fo.write("\n")
+    fo.write("\n")
+    fo.write(ss)
+    fo.write("\n")
     fo.write(s)
+
+'''
+http://elm-chan.org/docs/dosv/fontx_e.html
+https://github.com/nopnop2002/esp-idf-st7789
+'''
+
+fo = open("msx_font.c", "wt")
+font_bin = open("msx_1251.fnt", "wb")
+
+s=struct.pack("=6s8sBBB",
+              b"FONTX2",
+              b"MSX-1251",
+              6,
+              8,
+              0)
+font_bin.write(s)
+
+for i in range(256):
+    ii = win2koi[i] if i in win2koi else i
+
+    bb, ss = f.get_bytes_for_symbol_transp(ii)
+    str_bytes = bytes_to_code(bb)
+
+    s=f"0x06, {str_bytes}, // {i:3d} {i:02x}\n"
+    fo.write("\n")
+    fo.write(ss)
+    fo.write("\n")
+    fo.write(s)
+
+    n=len(bb)
+    s=struct.pack("="+n*"B", *bb)
+    font_bin.write(s)
+
 
 fo.close()
