@@ -74,25 +74,44 @@ class FONTBITMAP():
         ss.append("*/")
         return b, "\n".join(ss)
 
+    # по 6 бит потоком по пикселям от верхнего левого
+    # 3 байта - должно быть 4 строки по 6 точек
+    def get_bytes_for_symbol_ada(self, N):
+        x0, y0 = self.get_bitmap_start_pos(N)
+        bits = []
+        for yy in range(self.char_h):
+            for xx in range(self.char_w):
+                x = x0 + xx
+                y = y0 + yy
+                bits.append(1 if self.pix[x, y] == 255 else 0)
+
+        print(bits)
+
+        bs = [bits[j:j+8] for j in range(0, len(bits), 8)]
+        data_bytes = []
+        for bb in bs:
+            ss = sum([b << sh for b, sh in zip(bb, [7, 6, 5, 4, 3, 2, 1, 0])])
+            data_bytes.append(ss)
+
+        return data_bytes
+
     def get_string_pxf(self, N):
-        ss=["\t\tadvance: 6"]
+        ss = ["\t\tadvance: 6"]
         ss.append("\t\tauto_update_advance: false")
         ss.append("\t\tauto_advance_amount: 6")
 
         x0, y0 = self.get_bitmap_start_pos(N)
-        sb=[]
+        sb = []
         for xx in range(self.char_w):
             for yy in range(self.char_h):
                 x = x0 + xx
                 y = y0 + (7-yy)
                 if self.pix[x, y] == 255:
                     sb.append(f"{xx} {yy}")
-        if len(sb) ==0 :
+        if len(sb) == 0:
             return None
         ss.append("\t\tpixels: "+", ".join(sb)+", ")
         return "\n".join(ss)
-            
-
 
 
 def bytes_to_code(b):
@@ -171,64 +190,66 @@ win2koi = {
 
 f = FONTBITMAP("sys2_0002.png")
 
-fo = open("chars.c", "wt")
+# fo = open("chars.c", "wt")
 
-for i in range(256):
+# for i in range(256):
+#     ii = win2koi[i] if i in win2koi else i
+
+#     bb, ss = f.get_bytes_for_symbol(ii)
+#     str_bytes = bytes_to_code(bb)
+#     # s = "0x06, " + s + ", // %3d  %02x\n" % (i, i)
+#     s=f"0x06, {str_bytes}, // {i:3d} {i:02x}\n"
+#     fo.write("\n")
+#     fo.write(ss)
+#     fo.write("\n")
+#     fo.write(s)
+
+# make for adafruit format in TFT_eSPI
+# each line - 6 bytes with vertical pixels from left-top
+bitmap_data = []
+glyph_data = []
+offset = 0
+n = 0
+n_start = 32
+n_end = 126
+for i in range(n_start, n_end+1):
     ii = win2koi[i] if i in win2koi else i
+    bb = f.get_bytes_for_symbol_ada(ii)
+    bs = bytes_to_code(bb)
+    if (i < 255):
+        bs = bs+","
+    bitmap_data.append(bs)
+    gs = ", ".join([f"{i}" for i in [offset, 6, 8, 6, 0, -7]])
+    gss = "    { "+gs+" }"
+    if (i < 255):
+        gss = gss+","
+    glyph_data.append(gss)
+    offset = offset+6
+    n = n+1
 
-    bb, ss = f.get_bytes_for_symbol(ii)
-    str_bytes = bytes_to_code(bb)
-    # s = "0x06, " + s + ", // %3d  %02x\n" % (i, i)
-    s=f"0x06, {str_bytes}, // {i:3d} {i:02x}\n"
-    fo.write("\n")
-    fo.write(ss)
-    fo.write("\n")
-    fo.write(s)
+ss = []
+ss.append("#ifndef MSX_FONT_HEADER_ADA")
+ss.append("#define MSX_FONT_HEADER_ADA")
+ss.append("")
+ss.append("#include <TFT_eSPI.h>")
+ss.append("")
+ss.append("const uint8_t MSX_Font_6x8_Bitmaps[] PROGMEM = {")
+ss = ss+bitmap_data
+ss.append("};")
+ss.append("")
 
-'''
-http://elm-chan.org/docs/dosv/fontx_e.html
-https://github.com/nopnop2002/esp-idf-st7789
-'''
+ss.append("const GFXglyph MSX_Font_6x8_Glyphs[] PROGMEM = {")
+ss = ss+glyph_data
+ss.append("};")
+ss.append("")
 
-fo = open("msx_font.c", "wt")
-font_bin = open("msx_1251.fnt", "wb")
+ss.append("const GFXfont MSX_Font_6x8 PROGMEM = {")
+ss.append(
+    f"(uint8_t *)MSX_Font_6x8_Bitmaps, (GFXglyph *)MSX_Font_6x8_Glyphs, {n_start}, {n_end}, 8"+"};")
+ss.append("")
+ss.append("#endif")
+ss.append("")
 
-s=struct.pack("=6s8sBBB",
-              b"FONTX2",
-              b"MSX-1251",
-              6,
-              8,
-              0)
-font_bin.write(s)
-
-for i in range(256):
-    ii = win2koi[i] if i in win2koi else i
-
-    bb, ss = f.get_bytes_for_symbol_transp(ii)
-    str_bytes = bytes_to_code(bb)
-
-    s=f"0x06, {str_bytes}, // {i:3d} {i:02x}\n"
-    fo.write("\n")
-    fo.write(ss)
-    fo.write("\n")
-    fo.write(s)
-
-    n=len(bb)
-    s=struct.pack("="+n*"B", *bb)
-    font_bin.write(s)
+fo = open("msx.ada", "wt")
+fo.write("\n".join(ss))
 fo.close()
-
-fo=open("msx.pxf", "wt")
-n=0
-for i in range(33, 126+1):
-    ii = win2koi[i] if i in win2koi else i
-    s=f.get_string_pxf(ii)
-    if s is None:
-        continue
-    fo.write(f"\t{i}:\n")
-    fo.write(f"{s}\n")
-    n=n+1
-
-print(f"{n=}")    
-
-fo.close()    
